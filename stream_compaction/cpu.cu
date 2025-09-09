@@ -75,7 +75,7 @@ namespace StreamCompaction {
             }
 
             // scan
-            /*scan(n, scanOut.data(), b.data());*/
+            /*scan(n, scanOut.data(), b.data());*/ // <- can't just invoke since conflict with timer, so just copying over
             scanOut[0] = 0;
             for (int i = 1; i < n; ++i) {
                 scanOut[i] = scanOut[i - 1] + b[i - 1];
