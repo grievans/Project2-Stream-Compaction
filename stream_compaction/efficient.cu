@@ -15,10 +15,11 @@ namespace StreamCompaction {
 
         __global__ void kernUpSweep(int n, int dExpo, int* data/*, const int* idata*/) {
             // TODO I assume should invoke these with only the number of blocks actually used rather than with all the blocks when most don't do any, but will do following structure more literally first?
-            int d2 = dExpo * 2;
-            int k = threadIdx.x + (blockIdx.x * blockDim.x) * d2;
+            // TODO probably worth trying out shared memory way--I guess would move loop into here w/ syncs then change external loop to just when needing to cross boundaries
+            int d2 = dExpo << 1;
+            int k = (threadIdx.x + (blockIdx.x * blockDim.x)) * d2;
             if (k >= n) {
-                return;
+                return; // sounds like this way is generally better (more explicit that thread can stop)
             }
             //if (k < n) {
                 //odata[k + d2 - 1] = idata[k + dExpo - 1] + idata[k + d2 - 1];
@@ -27,8 +28,8 @@ namespace StreamCompaction {
             //}
         }
         __global__ void kernDownSweep(int n, int dExpo, int* data) {
-            int d2 = dExpo * 2;
-            int k = threadIdx.x + (blockIdx.x * blockDim.x) * d2;
+            int d2 = dExpo << 1;
+            int k = (threadIdx.x + (blockIdx.x * blockDim.x)) * d2;
             if (k >= n) {
                 return;
             }
@@ -43,14 +44,20 @@ namespace StreamCompaction {
         void scan(int n, int *odata, const int *idata) {
             // TODO not finished yet, doesn't work yet
             int blockSize = 128; // TODO optimize
-            dim3 fullBlocksPerGrid((n + blockSize - 1) / blockSize);
+            int pow2Size = 1 << ilog2ceil(n);
+            dim3 fullBlocksPerGrid((pow2Size + blockSize - 1) / blockSize);
             int* dev_idata;
             int* dev_odata;
-            cudaMalloc((void**)&dev_idata, n * sizeof(int));
+
+            // TODO note this pads to the whole next power of 2, was mentioned but can't recall if they said a way about that?
+            // TODO I think want to rewrite into using shared memory way but that's extra credit so I think don't need to
+
+
+            cudaMalloc((void**)&dev_idata, pow2Size * sizeof(int));
             //cudaMalloc((void**)&dev_odata, n * sizeof(int));
             
+            cudaMemset(dev_idata + n, 0, sizeof(int) * (pow2Size - n));
             cudaMemcpy(dev_idata, idata, sizeof(int) * n, cudaMemcpyHostToDevice); 
-            //cudaMemset(dev_odata, 0, sizeof(int) * n);
 
             //cudaMemset(dev_idata, 0, sizeof(int));
             //cudaMemcpy(dev_idata + 1, idata, sizeof(int) * (n - 1), cudaMemcpyHostToDevice);
@@ -64,24 +71,26 @@ namespace StreamCompaction {
             // up-sweep
             int dExpo = 1; // = 2^(d)
             for (int d = 0; d < dTarget; ++d) {
-                kernUpSweep<<<fullBlocksPerGrid, blockSize>>> (n, dExpo, dev_idata);
+                kernUpSweep<<<fullBlocksPerGrid, blockSize>>> (pow2Size, dExpo, dev_idata);
 
-                if (d < dTarget) {
-                    //fullBlocksPerGrid.x = (fullBlocksPerGrid.x - 1) / 2 + 1; // TODO reduce # of blocks accordingly
-                    fullBlocksPerGrid = dim3((n / dExpo + blockSize - 1) / blockSize);
-                    dExpo *= 2;
+                if (d < dTarget - 1) {
+                    fullBlocksPerGrid.x = (fullBlocksPerGrid.x - 1) / 2 + 1; // TODO reduce # of blocks accordingly
+                    //fullBlocksPerGrid.x >>= 1;
+                    //fullBlocksPerGrid = dim3((n / dExpo + blockSize - 1) / blockSize);
+                    dExpo <<= 1;
                     //std::swap(dev_idata, dev_odata);
                 }
             }
 
             // down-sweep
-            cudaMemset(dev_idata + (n - 1), 0, sizeof(int) * n); // TODO make sure that's right
-            fullBlocksPerGrid = dim3((n + blockSize - 1) / blockSize);
+            cudaMemset(dev_idata + (pow2Size - 1), 0, sizeof(int)); // TODO make sure that's right
+            //fullBlocksPerGrid = dim3((pow2Size + blockSize - 1) / blockSize);
             // TODO make sure dExpo right
             for (int d = dTarget - 1; d >= 0; --d) {
-                kernDownSweep<<<fullBlocksPerGrid, blockSize>>>(n, dExpo, dev_idata);
+                kernDownSweep<<<fullBlocksPerGrid, blockSize>>>(pow2Size, dExpo, dev_idata);
                 // TODO make fullBlocksPerGrid right;
-                dExpo /= 2;
+                fullBlocksPerGrid.x = (dExpo + blockSize - 1) / blockSize; // TODO make sure set properly but works on super basic case
+                dExpo >>= 1;
             }
 
 
