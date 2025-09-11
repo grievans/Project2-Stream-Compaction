@@ -88,7 +88,10 @@ namespace StreamCompaction {
                 }
             }
 
-            int count = scanOut[n - 1];
+            int count = scanOut[n - 1] + b[n-1];
+            /*if (b[n - 1]) {
+                ++count;
+            }*/
             timer().endCpuTimer();
             //free(b);
             //free(scanOut);

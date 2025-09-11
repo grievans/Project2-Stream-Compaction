@@ -16,7 +16,10 @@ namespace StreamCompaction {
 
         __global__ void kernScanStep(int n, int dExpo, int *odata, const int *idata) {
             int k = threadIdx.x + (blockIdx.x * blockDim.x);
-            if (k < n && k >= dExpo) {
+            if (k >= n) {
+                return;
+            }
+            if (k >= dExpo) {
                 odata[k] = idata[k - dExpo] + idata[k];
             }
             else {
@@ -37,7 +40,7 @@ namespace StreamCompaction {
             
             cudaMemset(dev_idata, 0, sizeof(int));
             cudaMemcpy(dev_idata + 1, idata, sizeof(int) * (n - 1), cudaMemcpyHostToDevice); // TODO not sure best way to do this, but makes exclusive rather than inclusive
-            cudaMemset(dev_odata, 0, sizeof(int) * n);
+            cudaMemset(dev_odata, 0, sizeof(int) * n); // <- I think unnecessary?
 
             //this seems to perform worse than CPU but I assume that's expected when doing the naive approach since this obviously is inefficient, and I'm only testing on a small dataset anyway rn so the overhead of this outweighs any parallelism benefit
             timer().startGpuTimer();

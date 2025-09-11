@@ -53,7 +53,8 @@ namespace StreamCompaction {
             // TODO not finished yet, doesn't work yet
             int blockSize = 128; // TODO optimize
             int pow2Size = 1 << ilog2ceil(n);
-            dim3 fullBlocksPerGrid((pow2Size >> 1 + blockSize - 1) / blockSize);
+            int nCap = pow2Size >> 1;
+            dim3 fullBlocksPerGrid((nCap + blockSize - 1) / blockSize);
             // TODO I'm still not sure if getting fullBlocksPerGrid right 100%, might be overshooting
             int* dev_idata;
             int* dev_odata;
@@ -79,7 +80,7 @@ namespace StreamCompaction {
             int dTarget = ilog2ceil(n); // TODO should these be out of timer?
             // up-sweep
             int dExpo = 1; // = 2^(d)
-            int nCap = pow2Size >> 1;
+            
             for (int d = 0; d < dTarget; ++d) {
                 
                 kernUpSweep<<<fullBlocksPerGrid, blockSize>>> (nCap, dExpo, dev_idata);
@@ -103,9 +104,11 @@ namespace StreamCompaction {
                 kernDownSweep<<<fullBlocksPerGrid, blockSize>>>(nCap, dExpo, dev_idata);
                 // TODO make fullBlocksPerGrid right;
                 //fullBlocksPerGrid.x = (dExpo + blockSize - 1) / blockSize; // TODO make sure set properly but works on super basic case
-                dExpo >>= 1;
-                nCap <<= 1;
-                fullBlocksPerGrid.x = ((nCap + blockSize - 1) / blockSize);
+                if (d > 0) {
+                    dExpo >>= 1;
+                    nCap <<= 1;
+                    fullBlocksPerGrid.x = ((nCap + blockSize - 1) / blockSize);
+                }
             }
 
 

@@ -13,7 +13,7 @@
 #include <stream_compaction/thrust.h>
 #include "testing_helpers.hpp"
 
-const int SIZE = 1 << 24; // feel free to change the size of array (<-- default 1 << 8)
+const int SIZE = 1 << 25; // feel free to change the size of array (<-- default 1 << 8)
 const int NPOT = SIZE - 3; // Non-Power-Of-Two
 int *a = new int[SIZE];
 int *b = new int[SIZE];
@@ -29,6 +29,7 @@ int main(int argc, char* argv[]) {
 
     genArray(SIZE - 1, a, 50);  // Leave a 0 at the end to test that edge case
     a[SIZE - 1] = 0;
+    //genArray(SIZE, a, 50);
     printArray(SIZE, a, true);
 
     // initialize b using StreamCompaction::CPU::scan you implement
@@ -103,8 +104,9 @@ int main(int argc, char* argv[]) {
 
     // Compaction tests
 
-    genArray(SIZE - 1, a, 4);  // Leave a 0 at the end to test that edge case
-    a[SIZE - 1] = 0;
+    genArray(SIZE, a, 4);
+    //genArray(SIZE - 1, a, 4);  // Leave a 0 at the end to test that edge case
+    //a[SIZE - 1] = 0;
     printArray(SIZE, a, true);
 
     int count, expectedCount, expectedNPOT;
