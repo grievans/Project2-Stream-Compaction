@@ -17,10 +17,14 @@ namespace StreamCompaction {
             // TODO I assume should invoke these with only the number of blocks actually used rather than with all the blocks when most don't do any, but will do following structure more literally first?
             // TODO probably worth trying out shared memory way--I guess would move loop into here w/ syncs then change external loop to just when needing to cross boundaries
             int d2 = dExpo << 1;
-            int k = (threadIdx.x + (blockIdx.x * blockDim.x)) * d2;
-            if (k >= n) {
-                return; // sounds like this way is generally better (more explicit that thread can stop)
+            int index = threadIdx.x + (blockIdx.x * blockDim.x);
+            if (index >= n) {
+                return; // TODO pass in that cap?
             }
+            int k = (index) * d2;
+            //if (k >= n) {
+                //return; // sounds like this way is generally better (more explicit that thread can stop)
+            //}
             //if (k < n) {
                 //odata[k + d2 - 1] = idata[k + dExpo - 1] + idata[k + d2 - 1];
                 // does this need a separate idata odata? I think no others operate on it this step
@@ -29,10 +33,14 @@ namespace StreamCompaction {
         }
         __global__ void kernDownSweep(int n, int dExpo, int* data) {
             int d2 = dExpo << 1;
-            int k = (threadIdx.x + (blockIdx.x * blockDim.x)) * d2;
-            if (k >= n) {
-                return;
+            int index = threadIdx.x + (blockIdx.x * blockDim.x);
+            if (index >= n) {
+                return; // TODO pass in that cap?
             }
+            int k = (index)*d2;
+            //if (k >= n) {
+                //return;
+            //}
             int t = data[k + dExpo - 1];
             data[k + dExpo - 1] = data[k + d2 - 1];
             data[k + d2 - 1] += t;
@@ -45,7 +53,8 @@ namespace StreamCompaction {
             // TODO not finished yet, doesn't work yet
             int blockSize = 128; // TODO optimize
             int pow2Size = 1 << ilog2ceil(n);
-            dim3 fullBlocksPerGrid((pow2Size + blockSize - 1) / blockSize);
+            dim3 fullBlocksPerGrid((pow2Size >> 1 + blockSize - 1) / blockSize);
+            // TODO I'm still not sure if getting fullBlocksPerGrid right 100%, might be overshooting
             int* dev_idata;
             int* dev_odata;
 
@@ -70,14 +79,18 @@ namespace StreamCompaction {
             int dTarget = ilog2ceil(n); // TODO should these be out of timer?
             // up-sweep
             int dExpo = 1; // = 2^(d)
+            int nCap = pow2Size >> 1;
             for (int d = 0; d < dTarget; ++d) {
-                kernUpSweep<<<fullBlocksPerGrid, blockSize>>> (pow2Size, dExpo, dev_idata);
+                
+                kernUpSweep<<<fullBlocksPerGrid, blockSize>>> (nCap, dExpo, dev_idata);
 
                 if (d < dTarget - 1) {
-                    fullBlocksPerGrid.x = (fullBlocksPerGrid.x - 1) / 2 + 1; // TODO reduce # of blocks accordingly
                     //fullBlocksPerGrid.x >>= 1;
                     //fullBlocksPerGrid = dim3((n / dExpo + blockSize - 1) / blockSize);
+                    //fullBlocksPerGrid.x = (fullBlocksPerGrid.x - 1) / 2 + 1; // TODO reduce # of blocks accordingly
                     dExpo <<= 1;
+                    nCap >>= 1;
+                    fullBlocksPerGrid.x = ((nCap + blockSize - 1) / blockSize); // Not sure this is totally the best way to set this but does massively reduce runtime (e.g. ~6ms to ~2ms)
                     //std::swap(dev_idata, dev_odata);
                 }
             }
@@ -87,10 +100,12 @@ namespace StreamCompaction {
             //fullBlocksPerGrid = dim3((pow2Size + blockSize - 1) / blockSize);
             // TODO make sure dExpo right
             for (int d = dTarget - 1; d >= 0; --d) {
-                kernDownSweep<<<fullBlocksPerGrid, blockSize>>>(pow2Size, dExpo, dev_idata);
+                kernDownSweep<<<fullBlocksPerGrid, blockSize>>>(nCap, dExpo, dev_idata);
                 // TODO make fullBlocksPerGrid right;
-                fullBlocksPerGrid.x = (dExpo + blockSize - 1) / blockSize; // TODO make sure set properly but works on super basic case
+                //fullBlocksPerGrid.x = (dExpo + blockSize - 1) / blockSize; // TODO make sure set properly but works on super basic case
                 dExpo >>= 1;
+                nCap <<= 1;
+                fullBlocksPerGrid.x = ((nCap + blockSize - 1) / blockSize);
             }
 
 
