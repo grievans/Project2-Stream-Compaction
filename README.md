@@ -12,3 +12,7 @@ CUDA Stream Compaction
 Include analysis, etc. (Remember, this is public, so don't put
 anything here that you don't want to share with the world.)
 
+## Setup Notes:
+
+I modified stream_compaction/CMakeLists.txt as [described here](https://edstem.org/us/courses/81464/discussion/6937028?answer=16157632); adding `find_package(CCCL REQUIRED)` and `target_link_libraries(stream_compaction CCCL::Thrust)` to fix the thrust library not properly being included.
+
