@@ -3,6 +3,10 @@
 #include "common.h"
 #include "efficient.h"
 
+
+#define DYNAMIC_BLOCK_SIZE 0
+// tried out an approach which in addition to reducing the # of blocks when the number of threads needed is small would reduce the size of the one remaining block when the amount of threads is less than that needs, but doesn't seem like it particularly benefits. Leaving in as an option but not using
+
 namespace StreamCompaction {
     namespace Efficient {
         using StreamCompaction::Common::PerformanceTimer;
@@ -49,7 +53,7 @@ namespace StreamCompaction {
          */
         void scan(int n, int *odata, const int *idata) {
             // TODO not finished yet, doesn't work yet
-            int blockSize = 128; // TODO optimize
+            int blockSize = 32; // Seems to perform best here for 32 or 64 but the change is generally pretty minor
             int dTarget = ilog2ceil(n);
             int pow2Size = 1 << dTarget;
             int nCap = pow2Size >> 1;
@@ -73,6 +77,9 @@ namespace StreamCompaction {
             //cudaMemcpy(dev_idata + 1, idata, sizeof(int) * (n - 1), cudaMemcpyHostToDevice);
 
             // TODO make sure to deal with size not 2^x
+#if DYNAMIC_BLOCK_SIZE
+            int blockSize2 = blockSize;
+#endif
 
             timer().startGpuTimer();
 
@@ -82,9 +89,11 @@ namespace StreamCompaction {
             int dExpo = 1; // = 2^(d)
             
             for (int d = 0; d < dTarget; ++d) {
-                
-                kernUpSweep<<<fullBlocksPerGrid, blockSize>>> (nCap, dExpo, dev_idata);
-
+#if DYNAMIC_BLOCK_SIZE
+                kernUpSweep<<<fullBlocksPerGrid, blockSize2 >>> (nCap, dExpo, dev_idata);
+#else
+                kernUpSweep<<<fullBlocksPerGrid, blockSize >>> (nCap, dExpo, dev_idata);
+#endif
                 if (d < dTarget - 1) {
                     //fullBlocksPerGrid.x >>= 1;
                     //fullBlocksPerGrid = dim3((n / dExpo + blockSize - 1) / blockSize);
@@ -93,15 +102,36 @@ namespace StreamCompaction {
                     nCap >>= 1;
                     fullBlocksPerGrid.x = ((nCap + blockSize - 1) / blockSize); // Not sure this is totally the best way to set this but does massively reduce runtime (e.g. ~6ms to ~2ms)
                     //std::swap(dev_idata, dev_odata);
+
+#if DYNAMIC_BLOCK_SIZE
+                    // could reduce blockSize when gets really low but not sure worth the effort
+                    //  doesn't seem to really matter, so just turning off but making an option anyway
+                    if (nCap < blockSize) {
+                        blockSize2 = nCap;
+                        //blockSize2 = ((nCap - 1) / 32 + 1) * 32;
+                    }
+                    else {
+                        blockSize2 = blockSize;
+                    }
+#endif
                 }
             }
-
             // down-sweep
             cudaMemset(dev_idata + (pow2Size - 1), 0, sizeof(int)); // TODO make sure that's right
             //fullBlocksPerGrid = dim3((pow2Size + blockSize - 1) / blockSize);
             // TODO make sure dExpo right
             for (int d = dTarget - 1; d >= 0; --d) {
+#if DYNAMIC_BLOCK_SIZE
+                if (nCap < blockSize) {
+                    blockSize2 = nCap;
+                }
+                else {
+                    blockSize2 = blockSize;
+                }
+                kernDownSweep<<<fullBlocksPerGrid, blockSize2>>>(nCap, dExpo, dev_idata);
+#else
                 kernDownSweep<<<fullBlocksPerGrid, blockSize>>>(nCap, dExpo, dev_idata);
+#endif
                 // TODO make fullBlocksPerGrid right;
                 //fullBlocksPerGrid.x = (dExpo + blockSize - 1) / blockSize; // TODO make sure set properly but works on super basic case
                 if (d > 0) {
@@ -130,8 +160,11 @@ namespace StreamCompaction {
         int compact(int n, int *odata, const int *idata) {
 
 
-            int blockSize = 128; // TODO optimize
+            //int blockSize = testBlockSize; // TODO optimize
+            int blockSize = 512; 
+            //512 seems to give best performance out of the values tested, but then scan on its own seems best at 32, so using 32 for scan and 512 for rest--seems to give better performance than same size for all the steps
             dim3 fullBlocksPerGrid((n + blockSize - 1) / blockSize);
+
             int* dev_idata;
             int* dev_odata;
             int* dev_boolArray;
@@ -140,10 +173,11 @@ namespace StreamCompaction {
             cudaMalloc((void**)&dev_idata, n * sizeof(int));
             cudaMalloc((void**)&dev_odata, n * sizeof(int));
 
+            int scanBlockSize = 32;
             int dTarget = ilog2ceil(n);
             int pow2Size = 1 << dTarget;
             int nCap = pow2Size >> 1;
-            dim3 fullBlocksPerGridScan((nCap + blockSize - 1) / blockSize);
+            dim3 fullBlocksPerGridScan((nCap + scanBlockSize - 1) / scanBlockSize);
 
             cudaMalloc((void**)&dev_boolArray, pow2Size * sizeof(int));
             cudaMalloc((void**)&dev_indices, pow2Size * sizeof(int));
@@ -170,23 +204,24 @@ namespace StreamCompaction {
 
             for (int d = 0; d < dTarget; ++d) {
 
-                kernUpSweep << <fullBlocksPerGrid, blockSize >> > (nCap, dExpo, dev_indices);
+                kernUpSweep << <fullBlocksPerGridScan, scanBlockSize >> > (nCap, dExpo, dev_indices);
 
                 if (d < dTarget - 1) {
                     dExpo <<= 1;
                     nCap >>= 1;
-                    fullBlocksPerGridScan.x = ((nCap + blockSize - 1) / blockSize); // Not sure this is totally the best way to set this but does massively reduce runtime (e.g. ~6ms to ~2ms)
+                    fullBlocksPerGridScan.x = ((nCap + scanBlockSize - 1) / scanBlockSize); // Not sure this is totally the best way to set this but does massively reduce runtime (e.g. ~6ms to ~2ms)
                 }
+
             }
 
             // down-sweep
             cudaMemset(dev_indices + (pow2Size - 1), 0, sizeof(int));
             for (int d = dTarget - 1; d >= 0; --d) {
-                kernDownSweep << <fullBlocksPerGrid, blockSize >> > (nCap, dExpo, dev_indices);
+                kernDownSweep << <fullBlocksPerGridScan, scanBlockSize >> > (nCap, dExpo, dev_indices);
                 if (d > 0) {
                     dExpo >>= 1;
                     nCap <<= 1;
-                    fullBlocksPerGridScan.x = ((nCap + blockSize - 1) / blockSize);
+                    fullBlocksPerGridScan.x = ((nCap + scanBlockSize - 1) / scanBlockSize);
                 }
             }
 
@@ -212,7 +247,6 @@ namespace StreamCompaction {
             cudaFree(dev_indices);
 
             
-            //return 10;
             return count + countStep;
         }
     }

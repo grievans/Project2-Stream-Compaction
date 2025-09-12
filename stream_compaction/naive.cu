@@ -31,7 +31,7 @@ namespace StreamCompaction {
          * Performs prefix-sum (aka scan) on idata, storing the result into odata.
          */
         void scan(int n, int *odata, const int *idata) {
-            int blockSize = 128; // TODO optimize
+            int blockSize = 512;
             dim3 fullBlocksPerGrid((n + blockSize - 1) / blockSize);
             int *dev_idata;
             int *dev_odata;
@@ -43,10 +43,10 @@ namespace StreamCompaction {
             cudaMemset(dev_odata, 0, sizeof(int) * n); // <- I think unnecessary?
 
             //this seems to perform worse than CPU but I assume that's expected when doing the naive approach since this obviously is inefficient, and I'm only testing on a small dataset anyway rn so the overhead of this outweighs any parallelism benefit
-            timer().startGpuTimer();
-            // TODO
             int dTarget = ilog2ceil(n);
             int dExpo = 1; // = 2^(d-1)
+            timer().startGpuTimer();
+            // TODO
             for (int d = 1; d <= dTarget; ++d) {
                 kernScanStep<<<fullBlocksPerGrid, blockSize>>>(n,dExpo,dev_odata,dev_idata);
 

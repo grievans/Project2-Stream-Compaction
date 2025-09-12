@@ -28,7 +28,8 @@ namespace StreamCompaction {
             // thrust::exclusive_scan(dv_in.begin(), dv_in.end(), dv_out.begin());
             
             
-            // TODO: this gives same result but performs way worse than bespoke kernels; dunno if that's how it's expected to be
+            // earlier comment: this gives same result but performs way worse than bespoke kernels; dunno if that's how it's expected to be
+            //   ^It's just the case on debug; faster on release. I assume just thrust e.g. keeps more info available for debug hence worse performance
             thrust::exclusive_scan(dv_in.begin(), dv_in.end(), dv_out.begin());
             timer().endGpuTimer();
 
