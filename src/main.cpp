@@ -13,7 +13,7 @@
 #include <stream_compaction/thrust.h>
 #include "testing_helpers.hpp"
 
-const int SIZE_POW = 24;
+const int SIZE_POW = 30;
 const int SIZE = 1 << SIZE_POW; // feel free to change the size of array (<-- default 1 << 8)
 const int NPOT = SIZE - 3; // Non-Power-Of-Two
 int *a = new int[SIZE];
@@ -21,6 +21,7 @@ int *b = new int[SIZE];
 int *c = new int[SIZE];
 
 #define SKIP_CPU 0
+#define SKIP_NON_THRUST 0
 
 int main(int argc, char* argv[]) {
     // Scan tests
@@ -41,7 +42,7 @@ int main(int argc, char* argv[]) {
     // We use b for further comparison. Make sure your StreamCompaction::CPU::scan is correct.
     // At first all cases passed because b && c are all zeroes.
     zeroArray(SIZE, b);
-#if !SKIP_CPU
+#if !SKIP_CPU && !SKIP_NON_THRUST
     printDesc("cpu scan, power-of-two");
     StreamCompaction::CPU::scan(SIZE, b, a);
     printElapsedTime(StreamCompaction::CPU::timer().getCpuElapsedTimeForPreviousOperation(), "(std::chrono Measured)");
@@ -66,7 +67,7 @@ int main(int argc, char* argv[]) {
     printDesc("1s array for finding bugs");
     StreamCompaction::Naive::scan(SIZE, c, a);
     printArray(SIZE, c, true); */
-
+#if !SKIP_NON_THRUST
     zeroArray(SIZE, c);
     printDesc("naive scan, non-power-of-two");
     StreamCompaction::Naive::scan(NPOT, c, a);
@@ -88,14 +89,18 @@ int main(int argc, char* argv[]) {
     printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
     //printArray(NPOT, c, true);
     printCmpResult(NPOT, b, c);
-
+#endif
     zeroArray(SIZE, c);
     printDesc("thrust scan, power-of-two");
     StreamCompaction::Thrust::scan(SIZE, c, a);
     printElapsedTime(StreamCompaction::Thrust::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
-    //printArray(SIZE, c, true);
+#if SKIP_NON_THRUST
+    printArray(SIZE, c, true);
+#else
     printCmpResult(SIZE, b, c);
+#endif
 
+#if !SKIP_NON_THRUST
     zeroArray(SIZE, c);
     printDesc("thrust scan, non-power-of-two");
     StreamCompaction::Thrust::scan(NPOT, c, a);
@@ -156,7 +161,7 @@ int main(int argc, char* argv[]) {
     printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
     //printArray(count, c, true);
     printCmpLenResult(count, expectedNPOT, b, c);
-
+#endif 
     system("pause"); // stop Win32 console from closing on exit
     delete[] a;
     delete[] b;

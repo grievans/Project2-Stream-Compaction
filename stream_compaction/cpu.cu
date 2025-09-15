@@ -61,10 +61,11 @@ namespace StreamCompaction {
             std::vector<int> b(n);
             std::vector<int> scanOut(n);
 
+            // Initially used:
             //int* b = new int[n];
             //int* scanOut = new int[n];
-            // TODO should I use something like this instead?: std::vector<bool> b(n);
-            //  probably fine either way; I'm swapping to std::vector since that's my preference in my own code writing
+            //  (with freeing them later)
+            // probably fine either way; I'm swapping to std::vector since that's my preference in my own code writing
 
             timer().startCpuTimer();
             // TODO
@@ -88,13 +89,11 @@ namespace StreamCompaction {
                 }
             }
 
+            // if last elment 1, add 1 to count since scan is exclusive
             int count = scanOut[n - 1] + b[n-1];
-            /*if (b[n - 1]) {
-                ++count;
-            }*/
+            
             timer().endCpuTimer();
-            //free(b);
-            //free(scanOut);
+
             return count;
         }
     }
