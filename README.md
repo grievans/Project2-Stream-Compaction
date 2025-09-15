@@ -20,9 +20,12 @@ I modified stream_compaction/CMakeLists.txt as [described here](https://edstem.o
 ## Questions
 
 # TODO plot, analysis of phenomena
-# TODO Nsight analsis
+# TODO Nsight analysis
 
 ## Program Output:
+
+I didn't add any additional tests to the output here, but I did test compact with arrays not ending in 0, whereas the base test always ended them with 0--this was significant as the use of exclusive scan means the final value in the indices array is equal to the total count of non-zero elements if the final element is 0, but otherwise is 1 less than the total count, so I needed to make sure my implementation handled this case correctly (but since it doesn't particularly affect performance, I did not take separate metrics for it for it).
+
 With array size 2^24:
 ```
 Array Size 2^24
