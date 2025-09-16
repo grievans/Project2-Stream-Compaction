@@ -33,28 +33,47 @@ An additional detail which was tested but ultimately is unused in this implement
 
 For smaller array sizes, the CPU implementation is plenty efficient and outperforms both the Naive and Work-efficient implementations
 
-# TODO Nsight analysis
+# Nsight analysis
 
 ![](img/Overview1.png)
 ![](img/Overview2.png)
 
-Looking at the timeline in NSight Systems, we see a few main periods of activity that seem to be associated with the calls to the Thrust library&mdash;firstly corresponding to the construction of the device vectors, then to the scan function itself, then to the copy operation sending the resulting data to the CPU side.
+Looking at the timeline for our Thrust-based implementation in NSight Systems, we see a few main periods of activity that seem to be associated with the calls to the Thrust library&mdash;firstly corresponding to the construction of the device vectors, then to the scan function itself, then to the copy operation sending the resulting data to the CPU side.
+
+![](img/Zoom1b.png)
+
+This section seems to correspond to the construction of the device vectors. We construct two device vectors: `dv_in` which is populated with the elements from `idata` and `dv_out` which is a vector of the same length which will be filled with the results from the scan. We can see in the CUDA API row of Nsight systems a cudaMalloc call followed by a cudaMemcpyAsync call, which seems to correspond to the `dv_in` vector being created and the values from `idata` being copied into it from the CPU. We then have a cudaStreamSynchronize call followed by another cudaMalloc, this time not followed by a copy call as the `dv_out` vector is created with memory allocated to it but no values to be copied into it yet.
 
 ![](img/Zoom1.png)
 
-TODO analysis TODO not actually sure if this or the earlier part is the main setup of vectors TODO I think this is the synching at end of vector setup, need to retake zoomed out more
+That cudaMalloc precedes another cudaStreamSynchronize call, which seems to suggest it is synching to ensure the vectors are done being created before they are used.
+
+![](img/Zoom2b.png)
+
+We then see cudaEventCreate and cudaEventRecord calls, which match the usage of `timer().startGpuTimer()`, which creates an event to be later used to determine the run time of the function. This is followed by where we call the `thrust::exclusive_scan` function, which seems to correspond to a cudaMalloc call followed by the calling of DeviceScanInitKernel and DeviceScanKernel. 
 
 ![](img/Zoom2.png)
 
-This span corresponds to the time measured with `timer().startGpuTimer()`&mdash;that is, the execution of `thrust::exclusive_scan` itself. 
+After a cudaStreamSynchronize we have a cudaFree call before another cudaEventRecord call and a cudaEventSynchronize call, the latter two matching the calling of `timer().endGpuTimer()` and hence letting us see that all of the activity happening between this and the earlier cudaEventRecord is that of the `thrust::exclusive_scan` call. The presence of cudaMalloc and cudaFree within this span seems to suggest the execution of exclusive_scan involves allocating some sort of temporary memory buffer separate from the input and output vectors, unlike our implementations of scan which perform all of their operations directly between the input and output arrays in the case of the naive implementation and acts in-place in the work-efficient implementation.
+
+![](img/Zoom2c.png)
+![](img/Zoom2d.png)
+
+The above two images show the execution of the aforementioned DeviceScanInitKernel and DeviceScanKernel, from which we can see that most of the execution time is taken up by the latter. Looking at the SM Warp Occupancy over time, the Compute Warps in Flight throughput percentage is 2% for most of the execution of DeviceScanInitKernel but increases to 82% for most of the DeviceScanKernel's execution&mdash;one can potentially guess that there is some sort of processing done in the "init" kernel which is less parallelizable, and hence we have this kernel do that initial work before starting another kernel which performs more parallelized work with much higher warp occupancy after.
 
 ![](img/Zoom3.png)
 
-TODO
+After the event recording is done and we are hence past our `timer().endGpuTimer()` call, we have a final cudaMemcpyAsync for the `thrust::copy` call which takes the data from the `dv_out` device vector and copies it into the CPU-side `odata` which is used to output the overall values from our `scan` function. After another cudaStreamSynchronize (ensuring the copying has finished) we have two cudaFree calls, which seem to be automatically performed by Thrust as it sees that the device vectors are now going to be out of scope and hence can be cleared from memory (compare the usage of something like raw pointers and `std::unique_ptr`&mdash;we don't need to explicitly write out the freeing of memory as we did in our other GPU-side scan implementations as the library does that for us).
 
-For all of the implementations, initial and final memory operations (primarily calls to cudaMemcpy) take take longer than the execution of the algorithm itself, hence being left out of our timing comparisons.
+![](img/Screenshot%202025-09-15%20155306.png)
 
-As the naive implementation here does not vary in number of threads between steps (with threads that aren't summing just copying values from idata to odata, rather than terminating early or not starting at all; the only threads that terminate early are those which have index greater than the total count of elements, i.e. only a few threads in one block when the array size is non-power-of-two), the kernel used by it has a fairly consistent length of execution. For the work-efficient implementation, the kernels vary in length of execution significantly likely because we both have more threads terminate early and we only launch blocks of threads up to the amount required for the work to actually be done in that step. The first calling of the up-sweep kernel takes the longest to complete, then each subsequent step becomes shorter as we reduce the number of threads needed, and inversely the down-sweep kernel starts the shortest then gets longer as we increase the number of threads used.
+For all of the implementations, initial and final memory operations (primarily calls to cudaMemcpy) take take longer than the execution of the algorithm itself, hence being left out of our timing comparisons for the algorithms themselves.
+
+![Naive implementation kernels](img/Naive1.png)
+
+![Work-efficient implementation kernels](img/WorkEfficient1.png)
+
+As the naive implementation here does not vary in number of threads between steps (with threads that aren't summing just copying values from idata to odata, rather than terminating early or not starting at all; the only threads that terminate early are those which have index greater than the total count of elements, i.e. only a few threads in one block and only any if the array size is non-power-of-two), the kernel used by it has a fairly consistent length of execution. For the work-efficient implementation, the kernels vary in length of execution significantly likely because we both have more threads terminate early and we only launch blocks of threads up to the amount required for the work to actually be done in that step. The first calling of the up-sweep kernel takes the longest to complete, then each subsequent step becomes shorter as we reduce the number of threads needed, and inversely the down-sweep kernel starts the shortest then gets longer as we increase the number of threads used.
 
 ## Program Output:
 
