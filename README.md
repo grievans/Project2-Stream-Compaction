@@ -3,9 +3,9 @@ CUDA Stream Compaction
 
 **University of Pennsylvania, CIS 565: GPU Programming and Architecture, Project 2**
 
-* (TODO) YOUR NAME HERE
-  * (TODO) [LinkedIn](), [personal website](), [twitter](), etc.
-* Tested on: (TODO) Windows 22, i7-2222 @ 2.22GHz 22GB, GTX 222 222MB (Moore 2222 Lab)
+* Griffin Evans
+  * gpevans@seas.upenn.edu, [personal website](evanses.com/griffin)
+* Tested on lab computer: Windows 11 Education, i9-12900F @ 2.40GHz 64.0GB, NVIDIA GeForce RTX 3090 (Levine 057 #1)
 
 ### (TODO: Your README)
 
@@ -16,6 +16,16 @@ anything here that you don't want to share with the world.)
 
 I modified stream_compaction/CMakeLists.txt as [described here](https://edstem.org/us/courses/81464/discussion/6937028?answer=16157632); adding `find_package(CCCL REQUIRED)` and `target_link_libraries(stream_compaction CCCL::Thrust)` to fix the thrust library not properly being included.
 
+TODO not sure order to put this in:
+## Work-efficient Parallel Scan Implementation (Part 5)
+
+In order to ensure the work-efficient implementation of scan was performant, a few considerations were made. Firstly note that in both the up-sweep and down-sweep kernels, in order to set the $k$ value (used in the indices of elements to be summed) which ranges from $0$ to $n-1$ (where $n$ is the number of elements in the padded array) in steps of $2^{d+1}$, we take the index of the thread (calculated from `threadIdx`, `blockIdx`, and `blockDim`), compare it to a maximum value and if it is greater than or equal to that value then we return, and if it isn't then we scale that index by multiplying it by $2^{d+1}$ and use that as our $k$.
+
+For the up-sweep, since the step size $2^{d+1}$ doubles in each iteration, we halve this maximum value each time, starting at $n/2$ as the first step size is $2^{0+1} = 2$. This means in each iteration we have half the number of threads which need to perform work, and the rest of the threads can terminate early upon reaching that maximum index check. Because all of the threads that have work required are sequential in index (their indices starting at 0 and going up by 1 to our maximum index at that step) we should have at most one warp which will have some threads working while others try to terminate early, while all other warps either have all threads doing work or all threads terminating early. In fact since we know the higher-index threads will not have to do any work, we can reduce the number of blocks launched as we reduce this maximum index, such that we completely skip any blocks that would have no threads which actually perform work.
+
+For the down-sweep, as $d$ is now descending and $2^{d+1}$ halves each time, we instead double the maximum value each time, such that the number of threads needing to do work doubles each time, and we similarly increase the number of blocks launched as the number of threads needed increases.
+
+An additional detail which was tested but ultimately is unused in this implementation was the reduction of size of the block once the number of threads needed to launch was low enough that we only had a single block. That is, when the number of threads that will do work is less than the default block size, the kernel would launch with a single block with a number of threads equal to the number of summations that will be done (also tested with that value rounded up to the next multiple of 32, to correspond with the size of warps). This however did not appear to cause any noticeable change in performance, and in testing various default block sizes it was found that starting all of the blocks with 32 threads (the size of a single warp) was most performant for running this implementation of scan on the hardware used&mdash;so since the blocks were single-warp-sized anyway (meaning there'd be no particular benefit to shrinking a block further, since 32 threads would make up the warp anyway), it was not necessary to use this size reduction behavior.
 
 ## Questions
 
@@ -32,7 +42,7 @@ Looking at the timeline in NSight Systems, we see a few main periods of activity
 
 ![](img/Zoom1.png)
 
-TODO analysis TODO not actually sure if this or the earlier part is the main setup of vectors
+TODO analysis TODO not actually sure if this or the earlier part is the main setup of vectors TODO I think this is the synching at end of vector setup, need to retake zoomed out more
 
 ![](img/Zoom2.png)
 
