@@ -7,18 +7,42 @@ CUDA Stream Compaction
   * gpevans@seas.upenn.edu, [personal website](evanses.com/griffin)
 * Tested on lab computer: Windows 11 Education, i9-12900F @ 2.40GHz 64.0GB, NVIDIA GeForce RTX 3090 (Levine 057 #1)
 
-### My Readme
+# Overview
 
-Include analysis, etc. (Remember, this is public, so don't put
-anything here that you don't want to share with the world.)
+This project is an implementation and demonstration of several implementations of exclusive scan and stream compaction algorithms. Our scan implementations all take in an array of integers `idata` and output to each index of the array `odata` the sum of all of the values in `idata` with lower indices. Our stream compaction functions take in an array of integers `idata` and output to `odata` an array of the same integers but with all elements that equal 0 removed, returning the number of elements in this resulting array.
+
+Four implementations of scan are featured: the first is a CPU-side implementation which sequentially steps through the input array, then we have 3 GPU-based implementations using CUDA. The first GPU-based implementation (the "naïve" implementation) is based on the non-work-efficient algorithm from Example 2 in [chapter 39 of _GPU Gems 3_](https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda), while the second GPU-based implementation is based on the work-efficient approach from Examples 3 and 4 in the same chapter. The last GPU-based approach simply leverages the existing Thrust library's implementation of exclusive scan.
+
+Three implementations of stream compaction are featured: the first is a straightforward CPU-based implementation, the second is a CPU-based implementation which divides the process into separate map/scan/scatter steps, and the third is a GPU-based implementation which uses the work-efficient scan implementation alongside GPU-side map and scatter kernels.
+
+Building the project and running `main()` will run each of the implementations on an array of random values, outputting the results and the time each implementation took to run.
 
 ## Setup Notes:
 
 I modified stream_compaction/CMakeLists.txt as [described here](https://edstem.org/us/courses/81464/discussion/6937028?answer=16157632); adding `find_package(CCCL REQUIRED)` and `target_link_libraries(stream_compaction CCCL::Thrust)` to fix the thrust library not properly being included.
 
-### Questions and Analysis
+The process of building the project was as follows:
 
-## Work-efficient Parallel Scan Implementation (Part 5)
+1. Clone the project to a folder and navigate into it in Bash.
+2. `mkdir build`
+3. `cd build`
+4. `cmake-gui ..`
+5. Within CMake GUI, configure the project, selecting Visual Studio 17 2022 as the generator and x64 as the platform.
+6. Select "generate".
+7. Open the generated `.sln` file within the build folder in Visual Studio.
+8. Build the project from the toolbar in Visual Studio.
+
+# Questions and Analysis
+
+## Performance Plots
+
+![](img/plot1.png)
+![](img/plot2.png)
+![](img/plot3.png)
+
+For smaller array sizes, the CPU implementation is plenty efficient and outperforms both the naïve and work-efficient implementations, while performing slightly slower than the Thrust implementation. TODO
+
+## Work-efficient Parallel Scan Implementation Details (re Part 5)
 
 In order to ensure the work-efficient implementation of scan was performant, a few considerations were made. Firstly note that in both the up-sweep and down-sweep kernels, in order to set the $k$ value (used in the indices of elements to be summed) which ranges from $0$ to $n-1$ (where $n$ is the number of elements in the padded array) in steps of $2^{d+1}$, we take the index of the thread (calculated from `threadIdx`, `blockIdx`, and `blockDim`), compare it to a maximum value and if it is greater than or equal to that value then we return, and if it isn't then we scale that index by multiplying it by $2^{d+1}$ and use that as our $k$. Note that the maximum needs to be compared before the multiplication is done, as otherwise with large enough array sizes we may have our $k$ value overflow and wrap around to a negative value.
 
@@ -28,12 +52,10 @@ For the down-sweep, as $d$ is now descending and $2^{d+1}$ halves each time, we 
 
 An additional detail which was tested but ultimately is unused in this implementation was the reduction of size of the block once the number of threads needed to launch was low enough that we only had a single block. That is, when the number of threads that will do work is less than the default block size, the kernel would launch with a single block with a number of threads equal to the number of summations that will be done (also tested with that value rounded up to the next multiple of 32, to correspond with the size of warps). This however did not appear to cause any noticeable change in performance, and in testing various default block sizes it was found that starting all of the blocks with 32 threads (the size of a single warp) was most performant for running this implementation of scan on the hardware used&mdash;so since the blocks were single-warp-sized anyway (meaning there'd be no particular benefit to shrinking a block further, since 32 threads would make up the warp anyway), it was not necessary to use this size reduction behavior.
 
-# Performance Plots
+Note that the block size of 32 for work-efficient scan was in constrast to the block sizes found to work best for the naïve implementation of scan and for the other steps of the GPU stream compaction implementation, which all seemed to perform the best with 512 threads per block.
 
-TODO
-For smaller array sizes, the CPU implementation is plenty efficient and outperforms both the Naive and Work-efficient implementations, while performing slightly slower than the Thrust implementation. 
 
-# Nsight analysis
+## Nsight analysis
 
 ![](img/Overview1.png)
 
@@ -55,7 +77,7 @@ We then see cudaEventCreate and cudaEventRecord calls, which match the usage of 
 
 ![](img/Zoom2.png)
 
-After a cudaStreamSynchronize we have a cudaFree call before another cudaEventRecord call and a cudaEventSynchronize call, the latter two matching the calling of `timer().endGpuTimer()` and hence letting us see that all of the activity happening between this and the earlier cudaEventRecord is that of the `thrust::exclusive_scan` call. The presence of cudaMalloc and cudaFree within this span seems to suggest the execution of exclusive_scan involves allocating some sort of temporary memory buffer separate from the input and output vectors, unlike our implementations of scan which perform all of their operations directly between the input and output arrays in the case of the naive implementation and acts in-place in the work-efficient implementation. I would assume this implementation uses shared memory to some degree, as that is a potential improvement which my work-efficient implementation does not account for, but I assume this memory usage here is something different as I believe shared memory usage wouldn't show up as a cudaMalloc call, seeing as `cudaMalloc()` is not the syntax used to allocate it and we allocate it at the launch of the kernel. That's not to say this is a sign the implementation doesn't use shared memory though (I would still guess that it does), but it does seem to imply there is also some other global memory usage in addition to that of the memory occupied by the two device vectors.
+After a cudaStreamSynchronize we have a cudaFree call before another cudaEventRecord call and a cudaEventSynchronize call, the latter two matching the calling of `timer().endGpuTimer()` and hence letting us see that all of the activity happening between this and the earlier cudaEventRecord is that of the `thrust::exclusive_scan` call. The presence of cudaMalloc and cudaFree within this span seems to suggest the execution of exclusive_scan involves allocating some sort of temporary memory buffer separate from the input and output vectors, unlike our implementations of scan which perform all of their operations directly between the input and output arrays in the case of the naïve implementation and acts in-place in the work-efficient implementation. I would assume this implementation uses shared memory to some degree, as that is a potential improvement which my work-efficient implementation does not account for, but I assume this memory usage here is something different as I believe shared memory usage wouldn't show up as a cudaMalloc call, seeing as `cudaMalloc()` is not the syntax used to allocate it and we allocate it at the launch of the kernel. That's not to say this is a sign the implementation doesn't use shared memory though (I would still guess that it does), but it does seem to imply there is also some other global memory usage in addition to that of the memory occupied by the two device vectors.
 
 ![](img/Zoom2c.png)
 
@@ -73,7 +95,7 @@ For all of the implementations, initial and final memory operations (primarily c
 
 ![Naive implementation kernels](img/Naive1.png)
 
-As the naive implementation here does not vary in number of threads between steps (with threads that aren't summing just copying values from idata to odata, rather than terminating early or not starting at all; the only threads that terminate early are those which have index greater than the total count of elements, i.e. only a few threads in one block and only any if the array size is non-power-of-two), the kernel used by it has a fairly consistent length of execution.
+As the naïve implementation here does not vary in number of threads between steps (with threads that aren't summing just copying values from idata to odata, rather than terminating early or not starting at all; the only threads that terminate early are those which have index greater than the total count of elements, i.e. only a few threads in one block and only any if the array size is non-power-of-two), the kernel used by it has a fairly consistent length of execution.
 
 ![Work-efficient implementation kernels](img/WorkEfficient1.png)
 
@@ -87,7 +109,7 @@ Note though that because we end up launching very few blocks for many of the ste
 
 ![](img/ComputeNaive1.png)
 
-The naive implementation has high Memory Throughput throughout, averaging 92.67%, while the Compute Throughput ranges from 15.27% to 23.30%.
+The naïve implementation has high Memory Throughput throughout, averaging 92.67%, while the Compute Throughput ranges from 15.27% to 23.30%.
 
 ![](img/ComputeThrust1.png)
 
